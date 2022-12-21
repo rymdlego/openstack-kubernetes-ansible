@@ -1,0 +1,74 @@
+---
+- name: cloud
+  include_tasks: cloud.yml
+  args:
+    apply:
+      become: yes
+
+- name: keepalived
+  include_tasks: keepalived.yml
+  when: kubernetes_role == 'controlplane'
+  args:
+    apply:
+      become: yes
+
+- name: haproxy
+  include_tasks: haproxy.yml
+  when: kubernetes_role == 'controlplane'
+  args:
+    apply:
+      become: yes
+
+- name: kubernetes common
+  include_tasks: kubernetes_common.yml
+  args:
+    apply:
+      become: yes
+
+- name: kubernetes control planes
+  include_tasks: kubernetes_controlplane.yml
+  when: kubernetes_role == 'controlplane'
+  args:
+    apply:
+      become: yes
+
+- name: Check if the node is already joined
+  stat:
+    path: /etc/kubernetes/pki/ca.crt
+  register: node_joined_stat
+
+- name: Join the node to cluster
+  become: yes
+  command: "{{ join_command }}"
+  when: kubernetes_role == 'worker' and not node_joined_stat.stat.exists
+
+- name: Add completion to bashrc
+  lineinfile:                                                                       
+    path: "/home/{{ ansible_user }}/.bashrc"
+    line: "{{ item }}"                                                              
+  loop:                                                                           
+    - "source <(kubectl completion bash)"
+    - "alias k=kubectl"
+    - "complete -o default -F __start_kubectl k"
+  when: "kubernetes_role == 'controlplane'"
+
+- name: Apply Calico network stack on master
+  command: kubectl apply -f https://projectcalico.docs.tigera.io/manifests/calico.yaml
+  changed_when: false
+  when: primary_cp is defined
+
+- name: Copy admin.conf to local machine
+  become: yes
+  fetch:
+    src: /etc/kubernetes/admin.conf
+    dest: ./kube.conf
+    flat: yes
+  when: primary_cp is defined
+
+- name: install open-iscsi and nfs-common
+  apt:
+    update_cache: true
+    name:
+      - "open-iscsi"
+      - "nfs-common"
+    state: present

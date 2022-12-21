@@ -1,0 +1,7 @@
+---
+- name: Install HA Kubernetes cluster
+  hosts: kubernetes
+  gather_facts: true
+
+  roles:
+    - kubernetes

@@ -1,0 +1,20 @@
+---
+- name: Populate hosts file
+  lineinfile:
+    path: "/etc/cloud/templates/hosts.debian.tmpl"
+    regexp: ".*\t{{ hostvars[item]['ansible_hostname']}}\t{{ hostvars[item]['ansible_hostname']}}"
+    line: "{{ hostvars[item]['ansible_env'].SSH_CONNECTION.split(' ')[2] }}\t{{ hostvars[item]['ansible_hostname']}}\t{{ hostvars[item]['ansible_hostname']}}"
+    state: present
+  register: hosts
+  with_items: "{{groups['kubernetes']}}"
+
+- name: Virtual IP in hosts file
+  lineinfile:
+    path: "/etc/cloud/templates/hosts.debian.tmpl"
+    line: "{{ api_vip }}\t{{ api_hostname }}\t{{ api_hostname }}"
+    state: present
+  register: virtualip
+      
+- name: Run cloud-init if hosts changed
+  command: cloud-init init
+  when: hosts.changed or virtualip.changed

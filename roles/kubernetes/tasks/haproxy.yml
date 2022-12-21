@@ -1,0 +1,18 @@
+---
+- name: Install haproxy on control planes
+  apt:
+    update_cache: true
+    name: haproxy
+    state: present
+
+- name: Configure haproxy on control planes
+  template:
+    src: haproxy.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: 600
+
+- name: Restart and enable haproxy on control planes
+  service:
+    name: haproxy
+    enabled: true
+    state: started

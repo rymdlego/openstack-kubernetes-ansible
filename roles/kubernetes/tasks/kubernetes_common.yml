@@ -1,0 +1,124 @@
+---
+- name: Ensure baseline packages are installed
+  apt:
+    update_cache: true
+    name:
+      - "gnupg"
+      - "gnupg2"
+      - "curl"
+      - "software-properties-common"
+    state: present
+
+- name: Disable swap (Kubernetes prerequisite)
+  command: swapoff -a
+  changed_when: false
+
+- name: Permanently disable swap in fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
+
+- name: Ensure containerd.conf exists
+  file:
+    path: /etc/modules-load.d/containerd.conf
+    state: touch
+  changed_when: false
+
+- name: Ensure lines in containerd.conf
+  copy:
+    dest: /etc/modules-load.d/containerd.conf
+    content: |
+      overlay
+      br_netfilter
+  register: containerdconf
+
+- name: One-shot run these commands if containerd.conf changed
+  shell: |
+    modprobe overlay
+    modprobe br_netfilter
+  when: containerdconf.changed
+
+- name: Ensure 99-kubernetes-cri.conf exists
+  file:
+    path: /etc/sysctl.d/99-kubernetes-cri.conf
+    state: touch
+  changed_when: false
+
+- name: Ensure lines in 99-kubernetes-cri.conf
+  copy:
+    dest: /etc/sysctl.d/99-kubernetes-cri.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.ipv4.ip_forward                 = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+  register: kubernetescriconf
+
+- name: Reload sysctl if 99-kubernetes-cri.conf changed
+  command: sysctl --system
+  when: kubernetescriconf.changed
+
+- name: Ensure containerd package is installed
+  apt:
+    update_cache: true
+    name: containerd
+    state: present
+  register: containerd_install
+
+- name: Ensure /etc/containerd exists
+  file:
+    path: /etc/containerd
+    state: directory
+
+- name: Get default config for containerd
+  command: "containerd config default"
+  register: containerd_default
+  when: containerd_install.changed
+
+- name: Set default config for containerd
+  copy:
+    dest: /etc/containerd/config.toml
+    content: "{{ containerd_default.stdout }}"
+  when: containerd_install.changed
+
+- name: Ensure systemd cgroup driver is enabled in containerd config
+  lineinfile:
+    insertafter: '.*\[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options\]$'
+    line: '            SystemdCgroup = true'
+    state: present
+    path: /etc/containerd/config.toml
+
+- name: Restart containerd
+  service:
+    name: containerd
+    state: restarted
+    enabled: true
+  when: containerd_install.changed
+
+- name: Ensure Google public signing key is present
+  apt_key:
+    url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    state: present
+
+- name: Ensure Kubernetes repository to sources
+  apt_repository:
+    repo: deb [arch=amd64] https://apt.kubernetes.io/ kubernetes-xenial main
+    state: present
+
+- name: Ensure Kubernetes components are installed
+  apt:
+    update_cache: true
+    name:
+      - "kubelet=1.24.0-00"
+      - "kubeadm=1.24.0-00"
+      - "kubectl=1.24.0-00"
+  register: k8s_install
+
+- name: Mark packages on hold
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - "kubelet"
+    - "kubeadm"
+    - "kubectl"
